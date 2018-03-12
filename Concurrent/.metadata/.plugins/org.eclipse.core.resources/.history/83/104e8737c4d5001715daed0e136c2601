@@ -1,0 +1,1069 @@
+// COMS20001 - Cellular Automaton Farm - Initial Code Skeleton
+// (using the XMOS i2c accelerometer demo code)
+
+#include <platform.h>
+#include <xs1.h>
+#include <stdio.h>
+#include "pgmIO.h"
+#include "i2c.h"
+
+#define  IMHT 64         //image height
+#define  IMWD 64         //image width
+
+
+
+typedef unsigned char uchar;      //using uchar as shorthand
+
+on tile[0]: in port buttons = XS1_PORT_4E;
+on tile[0]: out port leds = XS1_PORT_4F;
+
+on tile[0]: port p_scl = XS1_PORT_1E;         //interface ports to orientation
+on tile[0]: port p_sda = XS1_PORT_1F;
+
+#define FXOS8700EQ_I2C_ADDR 0x1E  //register addresses for orientation
+#define FXOS8700EQ_XYZ_DATA_CFG_REG 0x0E
+#define FXOS8700EQ_CTRL_REG_1 0x2A
+#define FXOS8700EQ_DR_STATUS 0x0
+#define FXOS8700EQ_OUT_X_MSB 0x1
+#define FXOS8700EQ_OUT_X_LSB 0x2
+#define FXOS8700EQ_OUT_Y_MSB 0x3
+#define FXOS8700EQ_OUT_Y_LSB 0x4
+#define FXOS8700EQ_OUT_Z_MSB 0x5
+#define FXOS8700EQ_OUT_Z_LSB 0x6
+
+char infname[] = "64x64.pgm";     //put your input image path here
+char outfname[] = "testout.pgm";   //put your output image path here
+int imwd32 = (IMWD/32);            //value of x for parallel processing of images that are greater than 16 x 16
+int split = (IMWD/4);              //value of x for parallel processing for 16 x 16
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+// Read Image from PGM file from path infname[] to channel c_out
+//
+// Write Image to PGM file from from to_farm[4] to path outfname[]
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+void showLEDs(out port p, chanend fromBoard) {
+
+    int pattern;
+    //1st bit...separate green LED
+    //2nd bit...blue LED
+    //3rd bit...green LED
+    //4th bit...red LED
+
+    while (1) {
+        fromBoard :> pattern;
+        p <: pattern;
+    }
+}
+
+
+//This function is to listen the button click from the module and send the signal to DataInStream or Farmer
+void buttonListener(in port b, chanend toDataInstream, chanend toFarm[4]) {
+    int r;
+    int i = 0;
+
+    while (1) {
+        b when pinseq(15) :> r;
+        b when pinsneq(15) :> r;
+
+            // When user pressed S1 and never pressed before
+            if ((r == 14) & (!i)) {
+                toDataInstream <: r;
+                i = 1;
+            }
+
+            // When user pressed S2 and S1 was pressed before
+            if ((r == 13) & i) {
+                toFarm[0] <: r;
+                toFarm[1] <: r;
+                toFarm[2] <: r;
+                toFarm[3] <: r;
+            }
+
+
+        }
+    }
+
+// This function is to read the file and send signals to led
+void DataInStream(char infname[], chanend to_farm[4], chanend toLED, chanend fromButton, chanend orient)
+{
+  int res;
+  uchar line[ IMWD ];
+  printf( "DataInStream: Start...\n" );
+
+  //Open PGM file
+  res = _openinpgm( infname, IMWD, IMHT );
+  if( res ) {
+    printf( "DataInStream: Error openening %s\n.", infname );
+    return;
+  }
+
+  printf("Waiting for button to be pressed....\n");
+
+  fromButton :> int value;
+
+  printf("Reading....\n");
+
+
+  //Read image line-by-line and send byte by byte to channel c_out
+
+  for( int y = 0; y < IMHT; y++ ) {
+    _readinline( line, IMWD );
+
+    // Turn on greed led
+    toLED <: 4;
+    int x = 0;
+    int byteNumber = 0;
+    while (x < IMWD) {
+        uchar byte = 0;
+
+        // If image is 16 x 16 or smaller
+        if ((IMWD <= 16)) {
+
+            // split image into four images and send it to different farmers
+            if (byteNumber < (split)) to_farm[0] <: line[x];
+            if ((byteNumber >= split) & (byteNumber < (split * 2))) to_farm[1] <: line[x];
+            if ((byteNumber >= (split * 2)) & (byteNumber < (split * 3))) to_farm[2] <: line[x];
+            if ((byteNumber >= (split * 3)) & (byteNumber < (split * 4))) to_farm[3] <: line[x];
+            x++;
+
+        // if image is 32 x 32 or greater
+        } else {
+
+            // bitpacking 8 pixels, which is equivalent to 8 bytes, into 1 byte
+            for (int i = 0; i < 8; i++) {
+                int input = 0;
+
+                // If a pixel is white, set a bit equal to one
+                if (line [x] == 255) input = 1;
+                // If a pixel is black, set a bit equal to zero
+                if (line [x] == 0) input = 0;
+
+                // Shift a byte to left side by one and add a bit
+                byte = byte << 1;
+                byte = byte | input;
+
+                // Go to next pixel
+                x ++;
+
+            }
+                // Split bitpakced images into 4 and send it to different farmers
+                if (byteNumber < (imwd32)) {
+
+                    to_farm[0] <: byte;
+                } else if (byteNumber >= imwd32 && byteNumber < (imwd32 * 2)) {
+
+
+                    to_farm[1] <: byte;
+                } else if (byteNumber >= (imwd32 * 2) && byteNumber < (imwd32 * 3)) {
+
+
+                    to_farm[2] <: byte;
+                }
+                else if (byteNumber >= (imwd32 * 3) && byteNumber < (imwd32 * 4)){
+
+                    to_farm[3] <: byte;
+                }
+
+        }
+
+
+
+        byteNumber++;
+
+  }
+  }
+
+  //Close PGM image file
+
+  _closeinpgm();
+
+
+
+
+  printf( "DataInStream: Done...\n" );
+
+  //if (IMWD != 16) { // disalbe this code to make led and orientation work for 16 by 16
+  while (1) {
+
+        // led value from each farmer
+        int ledval = 0;
+        // total led value from all farmer
+        int led = 0;
+        // variable to store the value received from orientation sensor
+        int orientval = 0;
+        // value received from orientation sensor
+        int val = 0;
+
+
+        select {
+            // If orientation sensor sent a signal to DataInStream
+            case orient :> val:
+                // If the board is tilted
+                if (val == 1) orientval = val;
+                break;
+            default:
+                // While orientation sensor is not sending a signal to DataInStream
+                orientval = 0;
+                break;
+        }
+
+        // Receive led value from each farmers
+        for (int i = 0; i < 4; i++) {
+            to_farm[i] :> ledval;
+            led = led+ledval;
+        }
+
+        // If all farmers are processing an image
+        if ((led == 4) | (led == 0)) {
+
+            // Turn on alternative green led
+            if (led == 4) toLED <: 1;
+            // Turn off a led
+            if (led == 0) toLED <: 0;
+
+                // If the board is not tilted
+                if (!orientval) {
+                    // Notify all farmers to keep process
+                    for (int i = 0; i < 4; i++) {
+                        to_farm[i] <: orientval;
+                    }
+                }
+
+                // If the board is tilted
+                if (orientval) {
+                    // Notify all farmers to pause the process
+                for (int i = 0; i < 4; i++) {
+                    to_farm[i] <: orientval;
+                }
+
+                // Turn on red led
+                toLED <: 8;
+
+                // total number of white pixels in an processed image
+                int totalnumpix = 0;
+                // number of white pixels from each farmer
+                int numpix = 0;
+
+                // Get the current state information from farmers, for instance:
+                //      which round it's currently working on
+                //      number of white pixel in an image
+                //      Amount of time spent on processing image so far from each farmer
+                // Then get an average time spent on processing image
+                int roundCounter = 0;
+                double timetaken[4];
+                double averagetimetaken = 0;
+
+                // Receive information from each farmer
+                for (int i = 0; i < 4; i++) {
+                    to_farm[i] :> numpix;
+                    to_farm[i] :> roundCounter;
+                    to_farm[i] :> timetaken[i];
+                    totalnumpix += numpix;
+                }
+
+                // Caluclate an average time
+                averagetimetaken = (timetaken[0] + timetaken[1] + timetaken[2] + timetaken[3]) / 4;
+
+
+                // Print the information
+                printf("\nReport\n");
+                printf("Round processed: %d\n", roundCounter);
+                printf("Total number of live pixel: %d\n", totalnumpix);
+                printf("Processing time taken so far: %1f seconds\n", averagetimetaken);
+
+                // Notify the farmers to pause the process until the board is not tilted
+                while (orientval != 0) {
+                    orient :> orientval;
+                    for (int i = 0; i < 4; i++){
+                        to_farm[i] <: orientval;
+                    }
+
+
+                }
+                }
+
+
+        }
+
+
+        // Turn on blue led
+        if (led == 12) toLED <: 2;
+        }
+  //} // disalbe this code to make led and orientation work for 16 by 16
+  return;
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+// Start your implementation by changing this function to implement the game of life
+// by farming out parts of the image to worker threads who implement it...
+// Currently the function just inverts the image
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+
+// This function is used to prevent number becoming negative
+int pmod(int i, int n) {
+
+    return (i % n + n) % n;
+}
+
+// This function is used to find the value of a specific bit that farmer wants to look at
+int bitval (int byte, int i){
+    int shifted = 0;
+
+    shifted = (byte << (i) & 128);
+
+    return shifted;
+}
+
+// This function is used to change the value of a specific bit that farmer wants to change
+int changeval (int byte, int i) {
+
+    int value = 128;
+
+    if (i != 0) {
+        for (int j = 0; j < i; j++) {
+            value = value / 2;
+        }
+    }
+
+    return byte ^ value;
+
+}
+
+// This function is used to send the edges of the images to other farmers
+// For example, right edge of an image from farmer 1 is send as a left side of an image of farmer 2 for reference purpose
+void barn(chanend fromfarmer, chanend toLeft, chanend toRight){
+    uchar edges[2][IMHT];
+
+    while(1){
+
+
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < IMHT; j++) {
+            fromfarmer :> edges[i][j];
+        }
+    }
+
+    for (int i = 0; i < IMHT; i++) {
+        toLeft <: edges[0][i];
+
+    }
+
+    for (int i = 0; i < IMHT; i++) {
+        toRight <: edges[1][i];
+    }
+    }
+}
+
+
+// This function processes an image
+void farmer(int id, chanend f_d, chanend toBarn, chanend r, chanend l, chanend output, chanend fromButton){
+
+    // Original picture with a left edge of a picture from farmer n-1 and a right edge of a picture from farmer n+1
+    uchar map[34][IMHT];
+    // Picture that are being processed
+    uchar total2[32][IMHT];
+
+    timer time;
+
+    // Total time spent on image processing
+    double totaltime = 0;
+
+    // Used to start the timer
+    unsigned int starttime;
+
+    // Used to end the timer
+    unsigned int endtime;
+
+    // Used to start the timer to get the processing time for 1000 rounds
+    unsigned int roundstart;
+
+    // Used to end the timer to get the processing time for 1000 rounds
+    unsigned int roundend;
+
+    // Time spent on image processing for 1000 rounds
+    double roundtime = 0;
+
+
+    // If iamge is 16 x 16 or smaller
+    if ((IMWD <= 16)) {
+
+        // Receive an image from DataInStream
+        for (int j = 0; j < IMHT; j++) {
+            for (int i = 1; i < (split + 1); i++) {
+                f_d :> map[i][j];
+                total2[i-1][j] = map[i][j];
+            }
+        }
+
+        // Used to keep track of processing round
+        int roundCounter = 0;
+
+        // Start timer
+        time :> starttime;
+
+        // Start separate timer for 1000 rounds
+        time :> roundstart;
+
+        while (1) {
+
+            int execute;
+
+
+            select {
+                // If user pressed the button to execute an image
+                case fromButton :> execute:
+                    int val;
+
+                    // Stop timer
+                    time :> endtime;
+                    time :> roundend;
+
+
+                    // Get the time between when the timer started and ended
+                    unsigned int finaltime = endtime - starttime;
+                    unsigned int round = roundend - roundstart;
+
+                    // Calculate the time spent on processing so far in seconds
+                    totaltime += ((double)finaltime)/100000000;
+                    roundtime += ((double)round)/100000000;
+
+                    // Send signal to DataOutStream to notify that image needs to be outputted
+                    output <: 1;
+                    // receive led signal from DataOutStrea
+                    output :> val;
+
+                    // Send led signal to DataInStream
+                    f_d <: val;
+
+                    // Send an image to DataOutStream
+                    for (int y = 0; y < IMHT; y++) {
+                        for (int x = 0; x < split; x++) {
+                            output <: total2[x][y];
+                        }
+                    }
+
+                    // Print message to notify user that an image has been outputted
+                    if (id == 0) printf("%d round executed\n", roundCounter);
+
+                    // Start the timer again
+                    time :> starttime;
+                    time :> roundstart;
+
+                    break;
+
+
+
+                default:
+
+                    // Hold orientation sensor value
+                    int or = 0;
+                    // Number of white pixel in an image
+                    int numlivepx = 0;
+
+
+                    // Send led signal to DataInstream
+                    f_d <: (roundCounter % 2);    // Enable these two lines to implement led and orientation sensor for 16 x 16
+                    // Receive an orientation sensor value
+                    f_d :> or;
+
+
+
+                    // Edges of an image
+                    uchar send_to_barn[2][IMHT];
+
+                    // Get the edges of an image
+                    for (int i = 0; i < IMHT; i++) {
+                        // Left edge
+                        send_to_barn[0][i] = map[1][i];
+                        // Right edge
+                        send_to_barn[1][i] = map[split][i];
+
+                    }
+
+                    // Send edges to barn
+                    for (int i = 0; i < 2; i++) {
+                        for (int j = 0; j < IMHT; j++) {
+                            toBarn <: send_to_barn[i][j];
+                        }
+                    }
+
+                    // Receive left edges of an image from farmer n+1
+                    for (int i = 0; i < IMHT; i++) {
+                        r :> map[split + 1][i];
+                    }
+
+                    // Receive right edges of an image from farmer n-1
+                    for (int i = 0; i < IMHT; i++) {
+                        l :> map[0][i];
+
+                    }
+
+
+
+                    for (int y = 0; y < IMHT; y++) {
+                        for(int x = 1; x < ((split) + 1) ; x++) {
+                            int total = 0;
+                            // Get the surronding pixel and check if they are alive or not
+                            // If they are alive, increment total
+                            if (map [x-1][y] != 0) total ++;
+                            if (map [x-1][pmod(y-1, IMWD)] != 0) total ++;
+                            if (map [x-1][pmod(y+1, IMWD)] != 0) total ++;
+                            if (map [x][pmod(y-1, IMWD)] != 0) total ++;
+                            if (map [x][pmod(y+1, IMWD)] != 0) total ++;
+                            if (map [x+1] [pmod(y-1, IMWD)] != 0) total++;
+                            if (map [x+1] [y] != 0) total++;
+                            if (map [x+1] [pmod(y+1, IMWD)] != 0) total++;
+
+                            // Apply the rules of game of life
+                            if (total < 2) {
+                                total2[x-1][y] = 0;
+                            } else if(total == 2) {
+                                total2[x-1][y] = map[x][y];
+                            } else if(total > 3) {
+                                total2[x-1][y] = 0;
+                            } else if (total == 3) {
+                                total2[x-1][y] = 255;
+                            }
+
+                        }
+
+                    }
+
+
+
+                    for (int y = 0; y < IMHT; y++) {
+                        for (int x = 1; x < (split + 1); x++) {
+                            // Get the number of white pixel in an image
+                            if (total2[x-1][y] == 255) numlivepx++;
+                            // Set processed image as an original image
+                            map[x][y] = total2[x-1][y];
+                        }
+                    }
+
+                    // Increment the process round
+                    roundCounter++;
+
+                    // Every 1000 processing rounds, display the time spent to process 1000 rounds
+                    if ((roundCounter % 1000) == 0) {
+                        time :> roundend;
+                        time :> endtime;
+
+                        unsigned int finaltime = endtime - starttime;
+                        unsigned int endresult = roundend - roundstart;
+                        roundtime += ((double)endresult)/100000000;
+
+                        if (id == 0) printf("To process 1000 round, it took %1f seconds\n", roundtime);
+
+                        roundtime = 0;
+                        totaltime += ((double)finaltime)/100000000;
+                        time :> roundstart;
+
+                        time :> starttime;
+
+                     }
+
+                    // Every 5000 processing rounds, update the timer to avoid overflow
+                    if ((roundCounter % 5000) == 0) {
+                        time :> endtime;
+                        time :> roundend;
+
+                        unsigned int endresult = roundend - roundstart;
+                        unsigned int finaltime = endtime - starttime;
+                        totaltime += ((double)finaltime) / 100000000;
+                        roundtime += ((double)endresult)/ 100000000;
+                        time :> starttime;
+
+                    }
+
+                    // If the board is tilted
+                    if (or) {
+
+
+                        // Pause the timers
+                        time :> endtime;
+                        time :> roundend;
+
+                        unsigned int round = roundend - roundstart;
+                        unsigned int finaltime = endtime - starttime;
+
+
+                        // Update the processing time taken
+                        roundtime += ((double)round)/100000000;
+                        totaltime += ((double) finaltime) / 100000000;
+
+                        // Send the information of an image and process to DataInStream
+                        f_d <: numlivepx;
+                        f_d <: roundCounter;
+                        f_d <: totaltime;
+
+                        // Pause the process until the board is not tilted
+                        while (or != 0) {
+                            f_d :> or;
+                        }
+
+                        // Start the timers
+                        time :> starttime;
+                        time :> roundstart;
+                    }
+
+                    break;
+
+            }
+        }
+
+    // If an image is 32 x 32 or greather
+    } else {
+
+
+
+        double roundtime = 0;
+
+        for (int j = 0; j < IMHT; j++){
+
+            for(int i = 1; i < ((imwd32)+1); i++) {
+
+                f_d :> map[i][j];
+
+                total2 [i-1][j] = map [i][j];
+            }
+        }
+
+
+        int roundCounter = 0;
+
+        time :> starttime;
+        time :> roundstart;
+
+        while (1){
+            int execute;
+            select {
+                case fromButton :> execute:
+                    int val;
+                    time :> endtime;
+                    time :> roundend;
+
+                    unsigned int round = roundend - roundstart;
+                    unsigned int finaltime = endtime - starttime;
+
+                    roundtime += ((double)round)/100000000;
+                    totaltime += ((double)finaltime)/100000000;
+
+
+                    output <: 1;
+                    output :> val;
+                    f_d <: val;
+
+                    for (int j = 0; j < IMHT; j++) {
+                        for (int i = 0; i < (imwd32); i++) {
+
+                            output <: total2[i][j];
+
+                        }
+                    }
+
+                    if (id == 0) printf("%d round executed\n", roundCounter);
+
+                    time :> starttime;
+                    time :> roundstart;
+
+                    break;
+
+                default:
+
+                    int or = 0;
+                    int numlivepx = 0;
+
+                    f_d <: (roundCounter%2);
+
+                    f_d :> or;
+
+                    uchar send_to_barn [2][IMHT];
+
+
+                    for (int i = 0; i < IMHT; i++){
+                        send_to_barn [0][i] = map [1][i];
+                        send_to_barn [1][i] = map [(imwd32)][i];
+                    }
+
+
+                    for (int i = 0; i < 2; i++) {
+                        for (int j = 0; j < IMHT; j++) {
+                            toBarn <: send_to_barn [i][j];
+                        }
+                    }
+
+                    for (int i = 0; i < IMHT; i++) {
+                        r :> map [(imwd32)+1][i];
+
+                    }
+
+                for (int i = 0; i < IMHT; i++) {
+                    l :> map [0] [i];
+                }
+
+
+
+
+                for (int y = 0; y < IMHT; y++) {
+                    int x = 1;
+                    while (x < (imwd32 + 1)) {
+
+                        // Each variable represents the surrounding byte that might be needed during the process
+                        // For example, luc represents upper left byte, ruc represents upper right byte
+                        uchar luc, u, ruc;
+                        uchar l,      r;
+                        uchar ldc, d, rdc;
+
+
+                        // Each variable represents the values of surrounding bits that will be needed for the process
+                        // For exmaple, luv represents upper left bit, ruv represents upper right bit
+                        uchar luv, uv, ruv;
+                        uchar lv,      rv;
+                        uchar ldv, dv, rdv;
+
+
+                        // Initialisation
+                        luc = 0; u = 0; ruc = 0;
+                        l = 0;          r = 0;
+                        ldc = 0; d = 0; rdc = 0;
+
+                        luv = 0; uv = 0; ruv = 0;
+                        lv = 0;          rv = 0;
+                        ldv = 0; dv = 0; rdv = 0;
+
+
+                        // Fetch surrounding byte
+                        luc = map[pmod(x-1, imwd32 + 2)][pmod(y-1,IMHT)];
+                        u = map[x][pmod(y-1, IMHT)];
+                        ruc = map[pmod(x+1, imwd32 + 2)][pmod(y-1,IMHT)];
+
+                        l = map[pmod(x-1, imwd32 + 2)][y];
+                        r = map[pmod(x+1, imwd32 + 2)][y];
+
+                        ldc = map[pmod(x-1, imwd32 + 2)][pmod(y+1,IMHT)];
+                        d = map[x][pmod(y+1,IMHT)];
+                        rdc = map[pmod(x+1, imwd32 + 2)][pmod(y+1, IMHT)];
+
+
+
+
+                        for (int i = 0; i < 8; i++) {
+                            char total = 0;
+
+                            // Fetch the values of surrounding bits
+                            // Depends on the position of the bits, different bytes were used for fetching
+                            if (i == 0) {
+                                luv = bitval(luc, 7);
+                                uv = bitval(u, i);
+                                ruv = bitval(u, i+1);
+                                lv = bitval(l, 7);
+                                rv = bitval(map[x][y], i+1);
+                                ldv = bitval(ldc, 7);
+                                dv = bitval(d, i);
+                                rdv = bitval(d, i+1);
+
+                                } else if (i == 7) {
+                                    luv = bitval(u, i-1);
+                                    uv = bitval(u, i);
+                                    ruv = bitval(ruc, 0);
+                                    lv = bitval(map[x][y], i-1);
+                                    rv = bitval(r, 0);
+                                    ldv = bitval(d, i-1);
+                                    dv = bitval(d, i);
+                                    rdv = bitval(rdc, 0);
+                                } else {
+                                    luv = bitval(u, i-1);
+                                    uv = bitval(u, i);
+                                    ruv = bitval(u, i+1);
+                                    lv = bitval(map[x][y], i - 1);
+                                    rv = bitval(map[x][y], i+1);
+                                    ldv = bitval(d, i-1);
+                                    dv = bitval(d, i);
+                                    rdv = bitval(d, i+1);
+                                }
+
+
+                            // Check the surrounding pixel if they are alive or not
+                            // If they are alive, increment total
+                            if (luv == 128) total++;
+                            if (uv == 128) total++;
+                            if (ruv == 128) total++;
+                            if (lv == 128) total++;
+                            if (rv == 128) total++;
+                            if (ldv == 128) total++;
+                            if (dv == 128) total++;
+                            if (rdv == 128) total++;
+
+
+                            // Apply the rules of game of life
+                            if (total < 2) {
+                                if (bitval(map[x][y], i) == 128) total2[x-1][y] = changeval(total2[x-1][y], i);
+                            }
+
+                            if (total == 3) {
+                                if (bitval(map[x][y], i) == 0) total2[x-1][y] = changeval(total2[x-1][y], i);
+                            }
+
+                            if (total > 3) {
+                                if (bitval(map[x][y],i) == 128) total2[x-1][y] = changeval(total2[x-1][y], i);
+                            }
+                        }
+
+                        x++;
+
+                    }
+
+
+                }
+
+
+                for (int y = 0; y < IMHT; y++){
+                    for (int x = 1; x < (imwd32 + 1); x++){
+
+                        // Get the number of white pixel in an image
+                        for (int z = 0; z < 8; z++) {
+                            if (bitval(total2[x-1][y], z) == 128) {
+                                numlivepx++;
+                            }
+                        }
+
+                          // Set processed image as an original image
+                        map [x][y] = total2[x-1][y];
+                    }
+                }
+
+                  roundCounter++;
+
+
+                  // Every 10 processing rounds, update the timer to avoid overflow
+                  if ((roundCounter % 10) == 0) {
+                      time :> roundend;
+                      time :> endtime;
+
+                      unsigned int round = roundend - roundstart;
+                      unsigned int finaltime = endtime - starttime;
+
+                      totaltime += ((double)finaltime)/100000000;
+                      roundtime += (((double)round) / 100000000);
+
+                      // If the processes reached 1000 rounds, display the time spent to process 1000 rounds
+                      if ((roundCounter % 1000) == 0) {
+                          if (id == 0) printf("To process 1000 round, it took %1f seconds\n", roundtime);
+
+                          roundtime = 0;
+                      }
+
+                      time :> starttime;
+                      time :> roundstart;
+                  }
+
+
+                  if (or) {
+                      time :> endtime;
+                      time :> roundend;
+
+                      unsigned int round = roundend - roundstart;
+                      unsigned int finaltime = endtime - starttime;
+
+                      roundtime += ((double)round)/100000000;
+
+                      totaltime += ((double) finaltime) / 100000000;
+                      f_d <: numlivepx;
+                      f_d <: roundCounter;
+                      f_d <: totaltime;
+                      while (or != 0) {
+                         f_d :> or;
+                      }
+                      time :> starttime;
+                      time :> roundstart;
+                  }
+
+
+                  break;
+            }
+
+
+        }
+
+
+
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+// Write pixel stream from channel c_in to PGM image file
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+void DataOutStream(char outfname[], chanend to_farm[])
+{ while (1) {
+    int val = 0;
+    for (int i = 0; i < 4; i++) {
+        to_farm[i] :> val;
+        to_farm[i] <: 3;
+    }
+
+    if (val) {
+        int res;
+
+
+  //Open PGM file
+        printf( "DataOutStream: Start...\n" );
+        res = _openoutpgm( outfname, IMWD, IMHT );
+        if( res ) {
+            printf( "DataOutStream: Error opening %s\n.", outfname );
+            return;
+        }
+
+  //Compile each line of the image and write the image line-by-line
+
+        for( int y = 0; y < IMHT; y++ ) {
+
+            uchar line[IMHT];
+
+
+            int element = 0;
+            int byteNumber = 0;
+
+            // If image is 16 x 16 or smaller
+            if ((IMWD <= 16) & (IMHT <= 16)) {
+                int x = 0;
+
+                // Receive an image from farmers
+                while (x < IMWD) {
+                    if (byteNumber < (split)) to_farm[0] :> line[x];
+                    if ((byteNumber >= split) & (byteNumber < (split * 2))) to_farm[1] :> line[x];
+                    if ((byteNumber >= (split * 2)) & (byteNumber < (split * 3))) to_farm[2] :> line[x];
+                    if ((byteNumber >= (split * 3)) & (byteNumber < (split * 4))) to_farm[3] :> line[x];
+                    x++;
+                    byteNumber++;
+                }
+                _writeoutline( line, IMWD );
+
+            // If image is greater than 16 x 16
+            } else {
+
+                // Receive an images from farmers
+                for (int x = 0; x < IMWD / 8; x++) {
+                    uchar byte;
+                    if (byteNumber < (imwd32)) {
+                        to_farm[0] :> byte;
+                    } else if (byteNumber >= imwd32 && byteNumber < (imwd32 * 2)) {
+                        to_farm[1] :> byte;
+                    } else if (byteNumber >= (imwd32 * 2) && byteNumber < (imwd32 * 3)) {
+                        to_farm[2] :> byte;
+                    }
+                    else {
+                        to_farm[3] :> byte;
+                    }
+                    byteNumber++;
+
+                    // Unpack the bits, turn it back to byte and write it to iamge file
+                    for (int i = 0; i < 8; i++) {
+                        int process = 0;
+                        process = bitval(byte, i);
+
+                        if (process == 128) line[element] = 255;
+                        else line[element] = 0;
+
+                        element++;
+
+                    }
+
+                }
+                _writeoutline( line, IMWD );
+            }
+
+            }
+
+
+        }
+
+  //Close the PGM image
+        _closeoutpgm();
+        printf( "DataOutStream: Done...\n" );
+    }
+    }
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+// Initialise and  read orientation, send first tilt event to channel
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+void orientation( client interface i2c_master_if i2c, chanend toDist) {
+  i2c_regop_res_t result;
+  char status_data = 0;
+  int tilted = 0;
+
+  // Configure FXOS8700EQ
+  result = i2c.write_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_XYZ_DATA_CFG_REG, 0x01);
+  if (result != I2C_REGOP_SUCCESS) {
+    printf("I2C write reg failed\n");
+  }
+
+  // Enable FXOS8700EQ
+  result = i2c.write_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_CTRL_REG_1, 0x01);
+  if (result != I2C_REGOP_SUCCESS) {
+    printf("I2C write reg failed\n");
+  }
+
+  //Probe the orientation x-axis forever
+  while (1) {
+
+    //check until new orientation data is available
+    do {
+      status_data = i2c.read_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_DR_STATUS, result);
+    } while (!status_data & 0x08);
+
+    //get new x-axis tilt value
+
+    //send signal to distributor after first tilt
+    while (1) {
+      int x = read_acceleration(i2c, FXOS8700EQ_OUT_X_MSB);
+      if (x>30) {
+        tilted = 1 - tilted;
+        toDist <: 1;
+      } else toDist <: 0;
+    }
+  }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+// Orchestrate concurrent system and start up all threads
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+int main(void) {
+
+i2c_master_if i2c[1];               //interface to orientation
+
+
+chan c_control;    //extend your channel definitions here
+chan f_d[4];
+chan c[4];
+chan l[4];
+chan r[4];
+chan output[4];
+chan fromIntoLED;
+chan fromButtontoFarm[4];
+chan fromButtontoIn;
+
+par {
+    on tile [0]: i2c_master(i2c, 1, p_scl, p_sda, 10);   //server thread providing orientation data
+    on tile [1]: orientation(i2c[0],c_control);        //client thread reading orientation data
+    on tile [0]: DataInStream(infname, f_d, fromIntoLED, fromButtontoIn, c_control);          //thread to read in a PGM image
+    on tile [1]: DataOutStream(outfname, output);       //thread to write out a PGM image
+    par (int i = 0; i < 4; i ++) {
+        on tile [i%2]: farmer(i, f_d[i], c[i], l[(i+1)%4], r[(i + 3) %4], output[i], fromButtontoFarm[i]); // thread to process an image
+        on tile [i%2]: barn(c[i], l[i], r[i]); // thread to save the edges of images
+    }
+
+    on tile[0]: showLEDs(leds, fromIntoLED); // thread to display the leds
+    on tile[0]: buttonListener(buttons, fromButtontoIn, fromButtontoFarm); // thread to listen when the buttons are pressed
+
+}
+
+  return 0;
+}

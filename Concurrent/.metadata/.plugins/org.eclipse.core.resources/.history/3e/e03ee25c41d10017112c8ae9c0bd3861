@@ -1,0 +1,542 @@
+// COMS20001 - Cellular Automaton Farm - Initial Code Skeleton
+// (using the XMOS i2c accelerometer demo code)
+
+#include <platform.h>
+#include <xs1.h>
+#include <stdio.h>
+#include "pgmIO.h"
+#include "i2c.h"
+
+#define  IMHT 64      //image height
+#define  IMWD 64                //image width
+
+
+
+typedef unsigned char uchar;      //using uchar as shorthand
+
+on tile[0]: in port buttons = XS1_PORT_4E;
+on tile[0]: out port leds = XS1_PORT_4F;
+
+on tile[0]: port p_scl = XS1_PORT_1E;         //interface ports to orientation
+on tile[0]: port p_sda = XS1_PORT_1F;
+
+#define FXOS8700EQ_I2C_ADDR 0x1E  //register addresses for orientation
+#define FXOS8700EQ_XYZ_DATA_CFG_REG 0x0E
+#define FXOS8700EQ_CTRL_REG_1 0x2A
+#define FXOS8700EQ_DR_STATUS 0x0
+#define FXOS8700EQ_OUT_X_MSB 0x1
+#define FXOS8700EQ_OUT_X_LSB 0x2
+#define FXOS8700EQ_OUT_Y_MSB 0x3
+#define FXOS8700EQ_OUT_Y_LSB 0x4
+#define FXOS8700EQ_OUT_Z_MSB 0x5
+#define FXOS8700EQ_OUT_Z_LSB 0x6
+
+char infname[] = "64x64.pgm";     //put your input image path here
+char outfname[] = "testout.pgm"; //put your output image path here
+int imwd32 = (IMWD/32);
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+// Read Image from PGM file from path infname[] to channel c_out
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+void showLEDs(out port p, chanend fromBoard) {
+    int pattern;
+    //1st bit...separate green LED
+    //2nd bit...blue LED
+    //3rd bit...green LED
+    //4th bit...red LED
+
+    while (1) {
+        fromBoard :> pattern;
+        p <: pattern;
+    }
+}
+
+void waitMoment() {
+  timer tmr;
+  int waitTime;
+  tmr :> waitTime;                       //read current timer value
+  waitTime += 200000;                  //set waitTime to 0.4s after value
+  tmr when timerafter(waitTime) :> void; //wait until waitTime is reached
+}
+
+void DataInStream(char infname[], chanend to_farm[4], chanend toLED, chanend orient)
+{
+  int res;
+  uchar line[ IMWD ];
+  printf( "DataInStream: Start...\n" );
+
+  //Open PGM file
+  res = _openinpgm( infname, IMWD, IMHT );
+  if( res ) {
+    printf( "DataInStream: Error openening %s\n.", infname );
+    return;
+  }
+
+  //Read image line-by-line and send byte by byte to channel c_out
+  int to3 = 0;
+  int to2 = 0;
+  int to1 = 0;
+  int to0 = 0;
+
+  for( int y = 0; y < IMHT; y++ ) {
+    _readinline( line, IMWD );
+    toLED <: 4;
+    waitMoment();
+    int x = 0;
+    int byteNumber = 0;
+    while (x < IMWD) {
+        uchar byte = 0;
+
+        for (int i = 0; i < 8; i++) {
+            int input = 0;
+            if (line[x]  == 255) input = 1;
+            if (line [x] == 0) input = 0;
+
+
+            byte = byte << 1;
+            byte = byte | input;
+
+
+            x ++;
+        }
+       // printf("ByteNumber: %d\n", byteNumber);
+
+        if (byteNumber < (imwd32)) {
+            //printf ("Sending to farmer %d\n", 0);
+            to0++;
+            //printf ("To 0 : %d\n", to0);
+            to_farm[0] <: byte;
+        } else if (byteNumber >= imwd32 && byteNumber < IMWD/16) {
+            //printf ("Sending to farmer %d\n", 1);
+
+            to1++;
+            //printf ("To 1 : %d\n", to1);
+
+            to_farm[1] <: byte;
+        } else if (byteNumber >= IMWD/16 && byteNumber < (IMWD/8 - imwd32)) {
+            //printf ("Sending to farmer %d\n", 2);
+            to2++;
+            //printf ("To 2 : %d\n", to2);
+
+            to_farm[2] <: byte;
+        }
+        else {
+            to3++;
+
+            //printf ("To 3 : %d\n", to3);
+            to_farm[3] <: byte;
+        }
+        byteNumber++;
+
+        //c_out <: byte;
+    }
+
+//    printf( "\n" );
+  }
+
+  //Close PGM image file
+  _closeinpgm();
+
+
+
+  printf( "DataInStream: Done...\n" );
+  while (1) {
+        int val = 0;
+        orient :> val;
+
+        if (val == 0) {
+            for (int i = 0; i < 4; i++){
+                //to_farm[i] <: 0;
+            }
+        } else {
+            toLED <: 8;
+            for (int i = 0; i < 4; i++){
+                //to_farm[i] <: 1;
+            }
+        }
+
+
+        printf ("orientation value : %d\n", val);
+        int ledval = 0;
+        int led = 0;
+
+        for (int i = 0; i < 4; i++) {
+            to_farm[i] :> ledval;
+            printf("Received led value\n");
+            if (ledval == 1) led++;
+        }
+
+        if (led == 4) toLED <: 1;
+        else toLED <: 0;
+    }
+  return;
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+// Start your implementation by changing this function to implement the game of life
+// by farming out parts of the image to worker threads who implement it...
+// Currently the function just inverts the image
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+int pmod(int i, int n) {
+    return (i % n + n) % n;
+}
+
+int bitval (int byte, int i){
+    int shifted = 0;
+
+    shifted = (byte << (i) & 128);
+
+    return shifted;
+}
+
+
+int changeval (int byte, int i) {
+
+    int value = 128;
+
+    if (i != 0) {
+        for (int j = 0; j < i; j++) {
+            value = value / 2;
+        }
+    }
+
+    return byte ^ value;
+
+}
+
+void barn(chanend fromfarmer, chanend toLeft, chanend toRight){
+    uchar edges[2][IMHT];
+
+    while(1){
+
+
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < IMHT; j++) {
+            fromfarmer :> edges[i][j];
+        }
+    }
+    //printf("Finished receiving\n");
+    for (int i = 0; i < IMHT; i++) {
+        toLeft <: edges[0][i];
+
+    }
+
+    for (int i = 0; i < IMHT; i++) {
+        toRight <: edges[1][i];
+    }
+    }
+}
+
+
+void farmer(int id, chanend f_d, chanend toBarn, chanend r, chanend l, chanend output){
+    uchar map [(IMWD/32 + 2)][IMHT];
+    uchar total2 [IMWD/32] [IMHT];
+
+    //printf("I'm here at 1\n");
+        for (int j = 0; j < IMHT; j++){
+
+            for(int i = 1; i < ((imwd32)+1); i++) {
+
+                f_d :> map[i][j];
+//                printf ("%d %d %d\n", i, j ,map[i][j]);
+                total2 [i-1][j] = map [i][j];
+            }
+        }
+        printf("Received\n");
+  int numOfRounds = 1000000;
+  int roundCounter = 0;
+  while (roundCounter < numOfRounds){
+    int or = 0;
+    f_d <: (roundCounter%2);
+    f_d :> or;
+    if (or != 0) {
+        while (or != 0) {
+            f_d :> or;
+        }
+    }
+    uchar send_to_barn [2][IMHT];
+
+    for (int i = 0; i < IMHT; i++){
+        send_to_barn [0][i] = map [1][i];
+        send_to_barn [1][i] = map [(imwd32)][i];
+    }
+
+
+    //printf("I'm here at 2\n");
+    for (int i = 0; i < 2; i++) {
+            for (int j = 0; j < IMHT; j++) {
+                toBarn <: send_to_barn [i][j];
+            }
+    }
+
+    for (int i = 0; i < IMHT; i++) {
+            r :> map [(imwd32)+1][i];
+
+    }
+
+    for (int i = 0; i < IMHT; i++) {
+        l :> map [0] [i];
+    }
+
+
+
+
+    for (int y = 0; y < IMHT; y++) {
+        int x = 1;
+        while (x < (imwd32 + 1)) {
+
+                  uchar luc, u, ruc;
+                  uchar l,      r;
+                  uchar ldc, d, rdc;
+
+                  uchar luv, uv, ruv;
+                  uchar lv,      rv;
+                  uchar ldv, dv, rdv;
+
+                  luc = 0; u = 0; ruc = 0;
+                  l = 0;          r = 0;
+                  ldc = 0; d = 0; rdc = 0;
+
+                  luv = 0; uv = 0; ruv = 0;
+                  lv = 0;          rv = 0;
+                  ldv = 0; dv = 0; rdv = 0;
+
+                  luc = map[pmod(x-1, imwd32 + 2)][pmod(y-1,IMHT)];
+                  u = map[x][pmod(y-1, IMHT)];
+                  ruc = map[pmod(x+1, imwd32 + 2)][pmod(y-1,IMHT)];
+
+                  l = map[pmod(x-1, imwd32 + 2)][y];
+                  r = map[pmod(x+1, imwd32 + 2)][y];
+
+                  ldc = map[pmod(x-1, imwd32 + 2)][pmod(y+1,IMHT)];
+                  d = map[x][pmod(y+1,IMHT)];
+                  rdc = map[pmod(x+1, imwd32 + 2)][pmod(y+1, IMHT)];
+
+                  for (int i = 0; i < 8; i++) {
+                      char total = 0;
+                      if (i == 0) {
+                          luv = bitval(luc, 7);
+                          uv = bitval(u, i);
+                          ruv = bitval(u, i+1);
+                          lv = bitval(l, 7);
+                          rv = bitval(map[x][y], i+1);
+                          ldv = bitval(ldc, 7);
+                          dv = bitval(d, i);
+                          rdv = bitval(d, i+1);
+
+                      } else if (i == 7) {
+                          luv = bitval(u, i-1);
+                          uv = bitval(u, i);
+                          ruv = bitval(ruc, 0);
+                          lv = bitval(map[x][y], i-1);
+                          rv = bitval(r, 0);
+                          ldv = bitval(d, i-1);
+                          dv = bitval(d, i);
+                          rdv = bitval(rdc, 0);
+                      } else {
+                          luv = bitval(u, i-1);
+                          uv = bitval(u, i);
+                          ruv = bitval(u, i+1);
+                          lv = bitval(map[x][y], i - 1);
+                          rv = bitval(map[x][y], i+1);
+                          ldv = bitval(d, i-1);
+                          dv = bitval(d, i);
+                          rdv = bitval(d, i+1);
+                      }
+
+
+                      if (luv == 128) total++;
+                      if (uv == 128) total++;
+                      if (ruv == 128) total++;
+                      if (lv == 128) total++;
+                      if (rv == 128) total++;
+                      if (ldv == 128) total++;
+                      if (dv == 128) total++;
+                      if (rdv == 128) total++;
+
+                      if (total < 2) {
+                          if (bitval(map[x][y], i) == 128) total2[x-1][y] = changeval(total2[x-1][y], i);
+                      }
+
+                      if (total == 3) {
+                          if (bitval(map[x][y], i) == 0) total2[x-1][y] = changeval(total2[x-1][y], i);
+                      }
+
+                      if (total > 3) {
+                          if (bitval(map[x][y],i) == 128) total2[x-1][y] = changeval(total2[x-1][y], i);
+                      }
+                  }
+
+                  x++;
+
+              }
+
+
+       }
+    for (int y = 0; y < IMHT; y++){
+        for (int x = 1; x < (imwd32 + 1); x++){
+            map [x][y] = total2[x-1][y];
+        }
+    }
+
+    roundCounter++;
+
+    //printf("Potato\n");
+
+
+    }
+
+  for (int j = 0; j < IMHT; j++) {
+      for (int i = 0; i < (imwd32); i++) {
+
+          output <: total2[i][j];
+  }
+  }
+
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+// Write pixel stream from channel c_in to PGM image file
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+void DataOutStream(char outfname[], chanend to_farm[])
+{
+  int res;
+
+
+  //Open PGM file
+  printf( "DataOutStream: Start...\n" );
+  res = _openoutpgm( outfname, IMWD, IMHT );
+  if( res ) {
+    printf( "DataOutStream: Error opening %s\n.", outfname );
+    return;
+  }
+
+  //Compile each line of the image and write the image line-by-line
+
+
+
+  for( int y = 0; y < IMHT; y++ ) {
+
+      uchar line[IMHT];
+      int element = 0;
+      int byteNumber = 0;
+
+    for( int x = 0; x < (IMWD/8); x++ ) {
+        uchar byte;
+        if (byteNumber < (imwd32)) {
+                   to_farm[0] :> byte;
+               } else if (byteNumber >= imwd32 && byteNumber < IMWD/16) {
+                   to_farm[1] :> byte;
+               } else if (byteNumber >= IMWD/16 && byteNumber < (IMWD/8 - imwd32)) {
+                   to_farm[2] :> byte;
+               }
+               else {
+                   to_farm[3] :> byte;
+               }
+        byteNumber++;
+
+        for (int i = 0; i < 8; i++) {
+            int process = 0;
+            process = bitval(byte, i);
+
+            if (process == 128) line[element] = 255;
+            else line[element] = 0;
+//            printf( "-%4.1d ", line[ element ] );
+            element++;
+
+        }
+       //show image values
+    }
+//    printf( "\n" );
+    _writeoutline( line, IMWD );
+//    printf( "DataOutStream: Line written...\n" );
+  }
+
+  //Close the PGM image
+  _closeoutpgm();
+  printf( "DataOutStream: Done...\n" );
+  return;
+}
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+// Initialise and  read orientation, send first tilt event to channel
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+void orientation( client interface i2c_master_if i2c, chanend toDist) {
+  i2c_regop_res_t result;
+  char status_data = 0;
+  int tilted = 0;
+
+  // Configure FXOS8700EQ
+  result = i2c.write_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_XYZ_DATA_CFG_REG, 0x01);
+  if (result != I2C_REGOP_SUCCESS) {
+    printf("I2C write reg failed\n");
+  }
+
+  // Enable FXOS8700EQ
+  result = i2c.write_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_CTRL_REG_1, 0x01);
+  if (result != I2C_REGOP_SUCCESS) {
+    printf("I2C write reg failed\n");
+  }
+
+  //Probe the orientation x-axis forever
+  while (1) {
+
+    //check until new orientation data is available
+    do {
+      status_data = i2c.read_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_DR_STATUS, result);
+    } while (!status_data & 0x08);
+
+    //get new x-axis tilt value
+
+
+    //send signal to distributor after first tilt
+    while (1) {
+      int x = read_acceleration(i2c, FXOS8700EQ_OUT_X_MSB);
+      if (x>30) {
+        tilted = 1 - tilted;
+        toDist <: 1;
+      } else toDist <: 0;
+    }
+  }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+// Orchestrate concurrent system and start up all threads
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+int main(void) {
+
+i2c_master_if i2c[1];               //interface to orientation
+
+
+chan c_control;    //extend your channel definitions here
+chan f_d[4];
+chan c[4];
+chan l[4];
+chan r[4];
+chan output[4];
+chan fromIntoLED;
+
+par {
+    on tile [0]: i2c_master(i2c, 1, p_scl, p_sda, 10);   //server thread providing orientation data
+    on tile [1]: orientation(i2c[0],c_control);        //client thread reading orientation data
+    on tile [0]: DataInStream(infname, f_d, fromIntoLED, c_control);          //thread to read in a PGM image
+    on tile [1]: DataOutStream(outfname, output);       //thread to write out a PGM image
+    par (int i = 0; i < 4; i ++) {
+        on tile [i%2]: farmer(i, f_d[i], c[i], l[(i+1)%4], r[(i + 3) %4], output[i]);
+        on tile [i%2]: barn(c[i], l[i], r[i]);
+    }
+
+    on tile[0]: showLEDs(leds, fromIntoLED);
+
+}
+
+  return 0;
+}
