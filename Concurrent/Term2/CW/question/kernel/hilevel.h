@@ -57,6 +57,8 @@ typedef struct {
 typedef struct {
      pid_t    pid;
   status_t status;
+  int      p_base;
+  int       p_age;
      ctx_t    ctx;
 } pcb_t;
 

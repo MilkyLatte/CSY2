@@ -6,25 +6,39 @@
  */
 
 #include "hilevel.h"
-
-pcb_t pcb[3];
+int n = 3;
+pcb_t pcb[ 3 ];
 int executing = 0;
 
 void scheduler( ctx_t* ctx ) {
-  if     ( 0 == executing ) {
-    memcpy( &pcb[ 0 ].ctx, ctx, sizeof( ctx_t ) ); // preserve P_1
-    pcb[ 0 ].status = STATUS_READY;                // update   P_1 status
-    memcpy( ctx, &pcb[ 1 ].ctx, sizeof( ctx_t ) ); // restore  P_2
-    pcb[ 1 ].status = STATUS_EXECUTING;            // update   P_2 status
-    executing = 1;                                 // update   index => P_2
+
+  // memcpy( &pcb[ executing ].ctx, ctx, sizeof( ctx_t ) ); // preserve P_1
+  // pcb[ executing ].status = STATUS_READY;                // update   P_1 status
+  // memcpy( ctx, &pcb[ (executing + 1)%n ].ctx, sizeof( ctx_t ) ); // restore  P_2
+  // pcb[ (executing + 1)%n  ].status = STATUS_EXECUTING;            // update   P_2 status
+  // executing = (executing + 1)%n;
+
+  int id = executing;
+
+  for(int i = 0; i < n; i++){
+      if (i != executing) {
+        pcb[ i ].p_age++;
+      }
+    }
+
+  for(int i = 0; i < n; i++){
+    if(pcb[ i ].p_age + pcb[ i ].p_base > pcb[id].p_base){
+      id = i;
+    }
   }
-  else if( 1 == executing ) {
-    memcpy( &pcb[ 1 ].ctx, ctx, sizeof( ctx_t ) ); // preserve P_2
-    pcb[ 1 ].status = STATUS_READY;                // update   P_2 status
-    memcpy( ctx, &pcb[ 0 ].ctx, sizeof( ctx_t ) ); // restore  P_1
-    pcb[ 0 ].status = STATUS_EXECUTING;            // update   P_1 status
-    executing = 0;                                 // update   index => P_1
-  }
+
+  memcpy( &pcb[ executing ].ctx, ctx, sizeof( ctx_t ) );
+  pcb[ executing ].status = STATUS_READY;          // update   P_1 status
+  memcpy( ctx, &pcb[ id ].ctx, sizeof( ctx_t ) ); // restore  P_2
+  pcb[ id  ].status = STATUS_EXECUTING;            // update   P_2 status
+  pcb [ id ].p_age = 0;
+  executing = id;
+
 
   TIMER0->Timer1IntClr = 0x01;
 
@@ -32,12 +46,9 @@ void scheduler( ctx_t* ctx ) {
 }
 
 extern void     main_P3();
-extern uint32_t tos_P3;
 extern void     main_P4();
-extern uint32_t tos_P4;
 extern void     main_P5();
-extern uint32_t tos_P5;
-
+extern uint32_t tos_P;
 void hilevel_handler_rst(ctx_t* ctx) {
   /* Configure the mechanism for interrupt handling by
    *
@@ -65,14 +76,28 @@ void hilevel_handler_rst(ctx_t* ctx) {
   pcb[ 0 ].status   = STATUS_READY;
   pcb[ 0 ].ctx.cpsr = 0x50;
   pcb[ 0 ].ctx.pc   = ( uint32_t )( &main_P3 );
-  pcb[ 0 ].ctx.sp   = ( uint32_t )( &tos_P3  );
+  pcb[ 0 ].ctx.sp   = ( uint32_t )(&tos_P - 0x00001000);
+  pcb[ 0 ].p_base = 15;
+  pcb[ 0 ].p_age  = 0;
+
 
   memset( &pcb[ 1 ], 0, sizeof( pcb_t ) );
   pcb[ 1 ].pid      = 2;
   pcb[ 1 ].status   = STATUS_READY;
   pcb[ 1 ].ctx.cpsr = 0x50;
   pcb[ 1 ].ctx.pc   = ( uint32_t )( &main_P4 );
-  pcb[ 1 ].ctx.sp   = ( uint32_t )( &tos_P4  );
+  pcb[ 1 ].ctx.sp   = ( uint32_t )(&tos_P - 0x00001000);
+  pcb[ 1 ].p_base = 10;
+  pcb[ 1 ].p_age  = 0;
+
+  memset( &pcb[ 2 ], 0, sizeof( pcb_t ) );
+  pcb[ 2 ].pid      = 3;
+  pcb[ 2 ].status   = STATUS_READY;
+  pcb[ 2 ].ctx.cpsr = 0x50;
+  pcb[ 2 ].ctx.pc   = ( uint32_t )( &main_P5 );
+  pcb[ 2 ].ctx.sp   = ( uint32_t )( &tos_P - 0x00001000);
+  pcb[ 2 ].p_base = 1;
+  pcb[ 2 ].p_age  = 0;
 
   memcpy( ctx, &pcb[ 0 ].ctx, sizeof( ctx_t ) );
   pcb[ 0 ].status = STATUS_EXECUTING;
@@ -119,6 +144,9 @@ void hilevel_handler_svc(ctx_t* ctx, uint32_t id ) {
       ctx->gpr[ 0 ] = n;
       break;
     }
+     case 0x03 : { // 0x03 => fork()
+
+     }
 
     default   : { // 0x?? => unknown/unsupported
       break;
