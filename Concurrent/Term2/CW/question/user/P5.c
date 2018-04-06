@@ -21,6 +21,7 @@ int is_prime( uint32_t x ) {
   return 1;
 }
 void main_P5() {
+
   for( int i = 0; i < 50; i++ ) {
     write( STDOUT_FILENO, "P5", 2 );
 

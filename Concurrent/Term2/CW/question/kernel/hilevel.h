@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include <string.h>
+#include "libc.h"
 
 // Include functionality relating to the platform.
 
@@ -59,6 +60,7 @@ typedef struct {
      status_t status;
      int      base;
      int      age;
+     int      parent;
      ctx_t    ctx;
 } pcb_t;
 
