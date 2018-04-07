@@ -8,6 +8,8 @@
 #include "hilevel.h"
 //int n = 4;
 pcb_t pcb[ 32 ];
+pipe_t pip[32];
+
 int executing = 0;
 uint32_t stack = 0x00001000;
 int sps = 0;
@@ -22,10 +24,10 @@ void scheduler( ctx_t* ctx ) {
   // pcb[ (executing + 1)%n  ].status = STATUS_EXECUTING;            // update   P_2 status
   // executing = (executing + 1)%n;
 
-  if(pcb[0].status == STATUS_READY){
-    write(STDOUT_FILENO, " C READY ", 9);
-
-  }
+  // if(pcb[0].status == STATUS_READY){
+  //   write(STDOUT_FILENO, " C READY ", 9);
+  //
+  // }
 
   int id = executing;
 
@@ -52,26 +54,26 @@ void scheduler( ctx_t* ctx ) {
     executing = id;
   }
 
-  int num = executing;
-  char snum[5];
+//   int num = executing;
+//   char snum[5];
+//
+// // convert 123 to string [buf]
+//   itoa(snum, num);
+//
+//   write(STDOUT_FILENO, "executing: ", 11);
+//   write(STDOUT_FILENO, snum, 5);
+//   write(STDOUT_FILENO, " ", 1);
 
-// convert 123 to string [buf]
-  itoa(snum, num);
+  int num1 = sps;
+  char snum1[5];
 
-  write(STDOUT_FILENO, "executing: ", 11);
-  write(STDOUT_FILENO, snum, 5);
+//convert 123 to string [buf]
+  itoa(snum1, num1);
+
+  write(STDOUT_FILENO, "SPS: ", 5);
+  write(STDOUT_FILENO, snum1, 5);
   write(STDOUT_FILENO, " ", 1);
 
-  // int num1 = sps;
-  // char snum1[5];
-
-// convert 123 to string [buf]
-  // itoa(snum1, num1);
-  //
-  // write(STDOUT_FILENO, "SPS: ", 5);
-  // write(STDOUT_FILENO, snum1, 5);
-  // write(STDOUT_FILENO, " ", 1);
-  //
 
 
 
@@ -177,25 +179,30 @@ void hilevel_handler_svc(ctx_t* ctx, uint32_t id ) {
 
        if(!rep){
          memset( &pcb[ sps ], 0, sizeof( pcb_t ) );
+         ctx->gpr[ 0 ] = 0;
          memcpy( &pcb[ sps ].ctx, ctx, sizeof( ctx_t ));
          pcb[ sps ].pid      = sps;
          pcb[ sps ].status   = STATUS_READY;
-         //pcb[ sps ].ctx.cpsr = 0x50;
          pcb[ sps ].ctx.sp   = ( uint32_t )(&tos_P - stack);
-         //pcb[ sps ].ctx.pc   = pcb [ executing ].ctx.pc;
+         pcb[ sps ].baseSP   = ( uint32_t )(&tos_P - stack);
          pcb[ sps ].parent   = executing;
          pcb[ sps ].base     = 1;
          pcb[ sps ].age      = 0;
+
          stack = stack + 0x00001000;
          sps++;
        } else {
-         uint32_t stackPointer = pcb[ repIndex ].ctx.sp;
+         int x = pcb[repIndex].pid;
+         ctx->gpr[ 0 ] = 0;
          memcpy( &pcb[ repIndex ].ctx, ctx, sizeof( ctx_t ));
-         //pcb[ repIndex ].ctx.pc     = pcb [ executing ].ctx.pc;
-         pcb[ repIndex ].ctx.sp     = stackPointer;
+         pcb[ repIndex ].pid        = x;
+         pcb[ repIndex ].ctx.sp     = pcb[ repIndex ].baseSP;;
          pcb[ repIndex ].parent     = executing;
          pcb[ repIndex ].status     = STATUS_READY;
        }
+       ctx->gpr[ 0 ] = pcb[executing].pid;
+
+
        break;
      }
       case 0x05:{ // exec
@@ -227,10 +234,6 @@ void hilevel_handler_svc(ctx_t* ctx, uint32_t id ) {
 
        // convert 123 to string [buf]
          itoa(snum, num);
-
-
-
-
          int x = (int )(ctx->gpr[0]);
          //memcpy( &pcb[ executing ].ctx, ctx, sizeof( ctx_t ) );
 
@@ -257,6 +260,10 @@ void hilevel_handler_svc(ctx_t* ctx, uint32_t id ) {
          // if (executing == sps-1){
          //   sps--;
          // }
+         break;
+       }
+       case 0x08: {
+         ctx->gpr[ 0 ] = pcb[executing].pid;
          break;
        }
       default   : { // 0x?? => unknown/unsupported

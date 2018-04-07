@@ -61,7 +61,15 @@ typedef struct {
      int      base;
      int      age;
      int      parent;
+     uint32_t baseSP;
      ctx_t    ctx;
 } pcb_t;
+
+typedef struct {
+  int server;
+  int client;
+  bool open;
+  int buffer;
+} pipe_t;
 
 #endif

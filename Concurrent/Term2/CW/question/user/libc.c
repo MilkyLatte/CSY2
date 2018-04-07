@@ -103,6 +103,16 @@ int  fork() {
   return r;
 }
 
+int getpid(){
+  int r;
+  asm volatile( "svc %1    \n"
+                "mov %0, r0 \n"
+               : "=r" (r)
+               : "I" (SYS_GETPID)
+               : "r0" );
+    return r;
+}
+
 void exit( int x ) {
   asm volatile( "mov r0, %1 \n" // assign r0 =  x
                 "svc %0     \n" // make system call SYS_EXIT
@@ -146,4 +156,51 @@ void nice( int pid, int x ) {
               : "r0", "r1" );
 
   return;
+}
+
+int pipe(){
+  int r;
+  asm volatile( "svc %1    \n"
+                "mov %0, r0 \n"
+               : "=r" (r)
+               : "I" (SYS_PIPE)
+               : "r0" );
+    return r;
+
+}
+
+int popen(){
+  int r;
+  asm volatile( "svc %1    \n"
+                "mov %0, r0 \n"
+               : "=r" (r)
+               : "I" (SYS_POPEN)
+               : "r0" );
+    return r;
+}
+
+int pwrite( int pipeNum, const void* x, size_t n) {
+  int r;
+
+  asm volatile( "mov r0, %2 \n" // assign r0 = fd
+                "mov r1, %3 \n" // assign r1 =  x
+                "mov r2, %4 \n" // assign r2 =  n
+                "svc %1     \n" // make system call SYS_WRITE
+                "mov %0, r0 \n" // assign r  = r0
+              : "=r" (r)
+              : "I" (SYS_PWRITE), "r" (pipeNum), "r" (x), "r" (n)
+              : "r0", "r1", "r2" );
+  return r;
+}
+
+int pread(int pipeNum){
+  int r;
+
+  asm volatile( "mov r0, %2 \n" // assign r0 = fd
+                "svc %1     \n" // make system call SYS_WRITE
+                "mov %0, r0 \n" // assign r  = r0
+              : "=r" (r)
+              : "I" (SYS_PREAD), "r" (pipeNum)
+              : "r0");
+  return r;
 }
