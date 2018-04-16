@@ -19,6 +19,7 @@
 
 // Include functionality relating to the platform.
 
+
 #include   "GIC.h"
 #include "PL011.h"
 #include "SP804.h"
@@ -66,10 +67,13 @@ typedef struct {
 } pcb_t;
 
 typedef struct {
-  int server;
-  int client;
-  bool open;
-  int buffer;
+  int pipeid, server, client, buffer;
+  status_t status;
 } pipe_t;
+
+typedef struct {
+  bool locked;
+  int lock, key, semid;
+} sem_t;
 
 #endif

@@ -38,11 +38,19 @@ typedef int pid_t;
 #define SYS_EXEC      ( 0x05 )
 #define SYS_KILL      ( 0x06 )
 #define SYS_NICE      ( 0x07 )
+
 #define SYS_GETPID    ( 0x08 )
+
 #define SYS_PIPE      ( 0X09 )
 #define SYS_POPEN     ( 0X10 )
 #define SYS_PWRITE    ( 0X11 )
-#define SYS_PREAD     ( 0X10 )
+#define SYS_PREAD     ( 0X12 )
+#define SYS_WPIPE     ( 0x18 )
+
+#define SYS_SEM       ( 0x14 )
+#define SYS_SCHECK    ( 0x15 )
+#define SYS_SLOCK     ( 0x16 )
+#define SYS_SUNLOCK   ( 0x17 )
 
 #define SIG_TERM      ( 0x00 )
 #define SIG_QUIT      ( 0x01 )
@@ -80,8 +88,19 @@ extern int  kill( pid_t pid, int x );
 extern void nice( pid_t pid, int x );
 
 extern int getpid();
+
 extern int pipe();
 extern int popen();
 extern int pwrite();
 extern int pread();
+extern int wpipe();
+
+extern int semaph();
+extern int check  (int x);
+extern bool lock  (int x);
+extern bool unlock(int x);
+extern void wait(int x);
+extern void sig(int x);
+
+
 #endif

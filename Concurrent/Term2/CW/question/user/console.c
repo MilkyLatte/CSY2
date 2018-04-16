@@ -101,7 +101,7 @@ void main_console() {
     if     ( 0 == strcmp( p, "execute"   ) ) {
       pid_t pid = fork();
 
-      if( 0 == pid ) {
+      if( 0 != pid ) {
         exec( load( strtok( NULL, " " ) ) );
       }
     }

@@ -158,15 +158,15 @@ void nice( int pid, int x ) {
   return;
 }
 
-int pipe(){
+int pipe(int x){
   int r;
-  asm volatile( "svc %1    \n"
-                "mov %0, r0 \n"
-               : "=r" (r)
-               : "I" (SYS_PIPE)
-               : "r0" );
+  asm volatile( "mov r0, %2 \n" // assign r0 = fd
+                "svc %1     \n" // make system call SYS_WRITE
+                "mov %0, r0 \n" // assign r  = r0
+              : "=r" (r)
+              : "I" (SYS_PIPE), "r" (x)
+              : "r0");
     return r;
-
 }
 
 int popen(){
@@ -179,7 +179,7 @@ int popen(){
     return r;
 }
 
-int pwrite( int pipeNum, const void* x, size_t n) {
+int pwrite( int pipeNum, int x, size_t n) {
   int r;
 
   asm volatile( "mov r0, %2 \n" // assign r0 = fd
@@ -203,4 +203,69 @@ int pread(int pipeNum){
               : "I" (SYS_PREAD), "r" (pipeNum)
               : "r0");
   return r;
+}
+
+int semaph(){
+  int r;
+  asm volatile( "svc %1    \n"
+                "mov %0, r0 \n"
+               : "=r" (r)
+               : "I" (SYS_SEM)
+               : "r0" );
+    return r;
+}
+
+int check(int x){
+  int r;
+  asm volatile( "mov r0, %2 \n" // assign r0 = fd
+                "svc %1     \n" // make system call SYS_WRITE
+                "mov %0, r0 \n" // assign r  = r0
+              : "=r" (r)
+              : "I" (SYS_SCHECK), "r" (x)
+              : "r0");
+  return r;
+}
+
+bool lock(int x){
+  bool r;
+  asm volatile( "mov r0, %2 \n" // assign r0 = fd
+                "svc %1     \n" // make system call SYS_WRITE
+                "mov %0, r0 \n" // assign r  = r0
+              : "=r" (r)
+              : "I" (SYS_SLOCK), "r" (x)
+              : "r0");
+  return r;
+}
+
+bool unlock(int x){
+  bool r;
+  asm volatile( "mov r0, %2 \n" // assign r0 = fd
+                "svc %1     \n" // make system call SYS_WRITE
+                "mov %0, r0 \n" // assign r  = r0
+              : "=r" (r)
+              : "I" (SYS_SUNLOCK), "r" (x)
+              : "r0");
+  return r;
+}
+
+int wpipe(int x){
+  int r;
+  asm volatile( "mov r0, %2 \n" // assign r0 = fd
+                "svc %1     \n" // make system call SYS_WRITE
+                "mov %0, r0 \n" // assign r  = r0
+              : "=r" (r)
+              : "I" (SYS_WPIPE), "r" (x)
+              : "r0");
+  return r;
+}
+
+void wait(int x){
+  while(1){
+    if(check(x) == -1) break;
+  }
+  lock(x);
+}
+
+void sig(int x){
+  unlock(x);
 }

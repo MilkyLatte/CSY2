@@ -7,12 +7,17 @@
 
 #include "hilevel.h"
 //int n = 4;
-pcb_t pcb[ 32 ];
-pipe_t pip[32];
+pcb_t  pcb[ 32 ];
+int sps = 0;
+
+pipe_t pip[ 64 ];
+int pipc = 0;
+
+sem_t  sem[ 32 ];
+int semc = 0;
 
 int executing = 0;
 uint32_t stack = 0x00001000;
-int sps = 0;
 bool rep = false; //replacable
 int repIndex = 1; //index to be replaced
 
@@ -63,18 +68,18 @@ void scheduler( ctx_t* ctx ) {
 //   write(STDOUT_FILENO, "executing: ", 11);
 //   write(STDOUT_FILENO, snum, 5);
 //   write(STDOUT_FILENO, " ", 1);
-
-  int num1 = sps;
-  char snum1[5];
-
-//convert 123 to string [buf]
-  itoa(snum1, num1);
-
-  write(STDOUT_FILENO, "SPS: ", 5);
-  write(STDOUT_FILENO, snum1, 5);
-  write(STDOUT_FILENO, " ", 1);
-
-
+//
+//   int num1 = sps;
+//   char snum1[5];
+//
+// //convert 123 to string [buf]
+//   itoa(snum1, num1);
+//
+//   write(STDOUT_FILENO, "SPS: ", 5);
+//   write(STDOUT_FILENO, snum1, 5);
+//   write(STDOUT_FILENO, " ", 1);
+//
+//
 
 
   TIMER0->Timer1IntClr = 0x01;
@@ -98,7 +103,7 @@ void hilevel_handler_rst(ctx_t* ctx) {
    * - enabling IRQ interrupts.
    */
 
-  TIMER0->Timer1Load  = 0x00100000; // select period = 2^20 ticks ~= 1 sec
+  TIMER0->Timer1Load  = 0x00010000; // select period = 2^20 ticks ~= 1 sec
   TIMER0->Timer1Ctrl  = 0x00000002; // select 32-bit   timer
   TIMER0->Timer1Ctrl |= 0x00000040; // select periodic timer
   TIMER0->Timer1Ctrl |= 0x00000020; // enable          timer interrupt
@@ -169,6 +174,8 @@ void hilevel_handler_svc(ctx_t* ctx, uint32_t id ) {
       break;
     }
      case 0x03 : { // 0x03 => fork()
+
+
        rep = false;
        for (int i = 0; i <= sps; i++){
          if (pcb [ i ].status == STATUS_TERMINATED && !rep){
@@ -176,6 +183,7 @@ void hilevel_handler_svc(ctx_t* ctx, uint32_t id ) {
            repIndex = i;
          }
        }
+       int child = 0;
 
        if(!rep){
          memset( &pcb[ sps ], 0, sizeof( pcb_t ) );
@@ -188,6 +196,7 @@ void hilevel_handler_svc(ctx_t* ctx, uint32_t id ) {
          pcb[ sps ].parent   = executing;
          pcb[ sps ].base     = 1;
          pcb[ sps ].age      = 0;
+         child = sps;
 
          stack = stack + 0x00001000;
          sps++;
@@ -199,8 +208,10 @@ void hilevel_handler_svc(ctx_t* ctx, uint32_t id ) {
          pcb[ repIndex ].ctx.sp     = pcb[ repIndex ].baseSP;;
          pcb[ repIndex ].parent     = executing;
          pcb[ repIndex ].status     = STATUS_READY;
+         child = x;
        }
-       ctx->gpr[ 0 ] = pcb[executing].pid;
+
+       ctx->gpr[0] = child;
 
 
        break;
@@ -262,8 +273,111 @@ void hilevel_handler_svc(ctx_t* ctx, uint32_t id ) {
          // }
          break;
        }
-       case 0x08: {
+       case 0x08: {//getpid
          ctx->gpr[ 0 ] = pcb[executing].pid;
+         break;
+       }
+       case 0x09: { //pipe
+         int   x = ( int )( ctx->gpr[ 0 ] );
+         memset( &pip[ pipc ], 0, sizeof( pipe_t ) );
+         pip[ pipc ].pipeid = pipc;
+         pip[ pipc ].server = pcb[ executing ].pid;
+         pip[ pipc ].client = x;
+         pip[ pipc ].buffer = 0;
+         pip[ pipc ].status = STATUS_CREATED;
+         ctx->gpr[ 0 ] = pipc;
+         pipc++;
+         break;
+       }
+       case 0x10:{ //popen
+         bool available = true;
+         for(int i = 0; i < pipc; i++) {
+           if(pip[ i ].status == STATUS_CREATED && available && pip[ i ].client == pcb[ executing ].pid){
+             pip[ i ].status = STATUS_READY;
+             ctx->gpr[ 0 ] = pip[ i ].pipeid;
+             available = false;
+           }
+         }
+          if (available) {
+           ctx->gpr[ 0 ] = -1;
+         }
+
+         break;
+       }
+       case 0x11:{//pwrite
+         int   fd = ( int   )( ctx->gpr[ 0 ] );
+         int    x = ( int   )( ctx->gpr[ 1 ] );
+         int    n = ( int   )( ctx->gpr[ 2 ] );
+
+         if (pip[fd].status == STATUS_READY) {
+           pip[ fd ].buffer = x;
+           pip[fd].status   = STATUS_WAITING;
+           ctx->gpr[ 0 ] = 1; //SUCCESS
+         } else {
+           ctx->gpr[ 0 ] = 0;
+         }
+         break;
+       }
+       case 0x12:{//pread
+         int   x = ( int )( ctx->gpr[ 0 ] );
+         if (pip[ x ].status == STATUS_WAITING){
+           ctx->gpr[ 0 ]   = pip[ x ].buffer;
+           pip[ x ].buffer = -1;
+           pip[ x ].status = STATUS_READY;
+         } else {
+           ctx->gpr[ 0 ] = -1;
+         }
+         break;
+       }
+       case 0x14:{//semaph
+         memset( &sem[ semc ], 0, sizeof( sem_t ) );
+         sem[ semc ].semid  = semc;
+         sem[ semc ].locked = false;
+         sem[ semc ].key    = -1;
+         ctx->gpr[ 0 ] = sem[ semc ].semid;
+         semc++;
+         break;
+       }
+       case 0x15:{//check semaphore
+         int   x = ( int )( ctx->gpr[ 0 ] );
+         if(sem[ x ].locked){
+           ctx->gpr[ 0 ] = sem[ x ].key;
+         } else {
+           ctx->gpr[ 0 ] = -1; //unlocked
+         }
+         break;
+       }
+       case 0x16:{//lock semaphore
+         int   x = ( int )( ctx->gpr[ 0 ] );
+         if(!sem[ x ].locked){
+           sem [ x ].key = pcb[executing].pid;
+           sem[ x ].locked = true;
+           ctx->gpr[ 0 ] = true;
+         } else {
+           ctx->gpr[ 0 ] = false;
+         }
+         break;
+       }
+       case 0x17:{//unlock semaphore
+         int   x = ( int )( ctx->gpr[ 0 ] );
+         if(sem[ x ].locked && sem[ x ].key == pcb[executing].pid){
+           sem[ x ].locked = false;
+           ctx->gpr[ 0 ] = true;
+         } else {
+           ctx->gpr[ 0 ] = false;
+         }
+         break;
+       }
+       case 0x18:{//wpipe
+         int   x = ( int )( ctx->gpr[ 0 ] );
+         int   a = -1;
+         for(int i = 0; i < pipc; i++){
+           if(pip[ i ].client == x) {
+             a = pip[ i ].client;
+             ctx->gpr[ 0 ] = a;
+             break;
+           }
+         }
          break;
        }
       default   : { // 0x?? => unknown/unsupported
