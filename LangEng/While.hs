@@ -5,7 +5,7 @@ import Yoda
 
 
 data Aexp
-  = Num Int
+  = N Int
   | Var Var
   | Aexp :+: Aexp
   | Aexp :*: Aexp
@@ -36,6 +36,12 @@ data Dec
    = Cont Var Aexp Dec
    | Empty
  deriving Show
+
+type Z = Int
+type T = Bool
+type State = Var -> Z
+
+
 {-
 -- The code below implements left-associative operations in decreasing
 -- precedence. It is superceded by the `precedence` function below.
@@ -57,7 +63,7 @@ precedence ops arg = foldl build arg ops
 aexp = precedence [[(:*:) <$ tok "*"]
                   ,[(:+:) <$ tok "+", (:-:) <$ tok "-"
                   ]]
-     $ Num <$> num
+     $ N <$> num
    <|> Var <$> var
    <|> tok "(" *> aexp <* tok ")"
 
@@ -81,7 +87,7 @@ stm = (:=) <$> var <* tok ":=" <*> aexp
    <|> tok "(" *> stms <* tok ")"
 
 decl :: Parser Dec
-decl =
+decl = undefined
 
 chainl p op = p >>= rest where
   rest x = do f <- op
@@ -100,3 +106,41 @@ whitespace = () <$ many (oneOf " \t\n\r")
 
 tok :: String -> Parser String
 tok t = string t <* whitespace
+
+
+--Semantics
+nval :: Int -> Z
+nval = id
+
+avaluation :: Aexp -> State -> Z
+avaluation (N n) s = nval n
+avaluation (Var x) s = s x
+avaluation (a1 :*: a2)  s = (avaluation a1 s) * (avaluation a2 s)
+avaluation (a1 :+: a2)  s = (avaluation a1 s) + (avaluation a2 s)
+avaluation (a1 :-: a2)  s = (avaluation a1 s) - (avaluation a2 s)
+
+bvaluation :: Bexp -> State -> T
+bvaluation T  s = True
+bvaluation F  s = False
+bvaluation (a :=: b)  s = (avaluation a s) == (avaluation b s)
+bvaluation (a :<=: b) s = (avaluation a s) <= (avaluation b s)
+bvaluation (a :&&: b) s = (bvaluation a s) && (bvaluation b s)
+bvaluation (Not a) s    = not(bvaluation a s)
+
+-- TEST VARIABLES
+a :: Aexp
+a = (Var "x" :+: Var "y") :*: (Var "z" :-: N 1)
+
+s:: State
+s "x" = 1
+s "y" = 2
+s "z" = 3
+s _   = 0
+
+bvaluation :: Bexp -> State -> T
+bvaluation T  s = True
+bvaluation F  s = False
+bvaluation (a :=: b)  s = (avaluation a s) == (avaluation b s)
+bvaluation (a :<=: b) s = (avaluation a s) <= (avaluation b s)
+bvaluation (a :&&: b) s = (bvaluation a s) && (bvaluation b s)
+bvaluation (Not a) s    = not(bvaluation a s)

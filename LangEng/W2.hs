@@ -59,7 +59,10 @@ animals (Quadrant a b c d) = nub (animals a ++ animals b ++ animals c ++ animals
 
 
 -- Shallow
-type Safari3 = [(Int, [Animal])]
+type Safari3 = [(Int, [Animal])] -- There must be a place to store the animals inside
+--the type so the list of animals can expressed. Changing this will change all the
+--definitions since the type will change from an Int to a tuple hence the impracticality
+--of the shallow embedding.
 territory3 :: [Animal] -> Safari3
 territory3 a = [(length a, a)]
 
@@ -84,13 +87,13 @@ data Safari1 = Territory1 [Animal]
 --Question 7
 numTerritories1 :: Safari1 -> Int
 numTerritories1 (Plot []) = 0
-numTerritories1 (Plot (x:xs)) = (numTerritories1 x) + (numTerritories1 (Plot xs))
+numTerritories1 (Plot (x:xs)) = (numTerritories1 x) + (numTerritories1 (xs))
 numTerritories1 (Territory1 a) = 1
 numTerritories1 (Fraction d c) = numTerritories1 c
 
 maxNumAnimals :: Safari1 -> [Int]
 maxNumAnimals (Plot []) = []
-maxNumAnimals (Plot (x:xs))  = (maxNumAnimals x ++ maxNumAnimals (Plot xs))
+maxNumAnimals (Plot (x:xs))  = (maxNumAnimals x ++ maxNumAnimals (xs))
 maxNumAnimals (Fraction d c) = maxNumAnimals c
 maxNumAnimals (Territory1 a) = [length a]
 
